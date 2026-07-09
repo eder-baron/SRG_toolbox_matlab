@@ -173,7 +173,7 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 
             % Map the pointwise-inverted Gauss-plane boundary back into
             % the Beltrami-Klein disk, so W reflects T^-1 too.
-            W{ii} = [beltrami_map_scalar(gp_ii(:)); flipud(beltrami_map_scalar(gm_ii(:)))];
+            W{ii} = [beltrami_map_scalar(gp_ii(:))];
         end
 
         gplus{ii}  = gp_ii;
