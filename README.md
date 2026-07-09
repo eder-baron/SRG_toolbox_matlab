@@ -43,7 +43,7 @@ figure; srg_plot_gauss(G, gplus, gminus, 1, 200);
   title  = {{SRG Toolbox}: Scaled Relative Graph Analysis for {MATLAB}},
   author = {Baron-Prada, Eder and Anta, Adolfo and Chaffey, Thomas and Padoan, Alberto},
   year   = {2026},
-  url    = {https://github.com/your-org/srg-toolbox}
+  url    = {https://github.com/eder-baron/srg-toolbox}
 }
 ```
 ---
