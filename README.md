@@ -39,11 +39,11 @@ figure; srg_plot_gauss(G, gplus, gminus, 1, 200);
 ## Citation
 
 ```bibtex
-@misc{Baron_SRG_Toolbox_2026,
-  title   = {An Open-Source {MATLAB} Toolbox for Scaled Relative Graph Analysis},
-  author  = {Baron-Prada, Eder and Anta, Adolfo and Chaffey, Thomas and Padoan, Alberto},
-  year    = {2026},
-  note    = {IEEE Open Journal of Control Systems (OJCSYS), submitted}
+@software{Baron_SRG_Toolbox_2026,
+  title  = {{SRG Toolbox}: Scaled Relative Graph Analysis for {MATLAB}},
+  author = {Baron-Prada, Eder and Anta, Adolfo and Chaffey, Thomas and Padoan, Alberto},
+  year   = {2026},
+  url    = {https://github.com/your-org/srg-toolbox}
 }
 ```
 ---
