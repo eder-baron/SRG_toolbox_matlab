@@ -34,6 +34,7 @@
 %
 % Internal utilities (bg/)
 %   beltrami_map_matrix  - Beltrami-Klein mapping for a matrix operator
+%   beltrami_map_scalar  - Beltrami-Klein mapping for scalar values (eigenvalues)
 %   beltrami_inv         - Inverse Beltrami-Klein mapping to the Gauss plane
 %   srg_to_polyshape     - Convert complex SRG boundary vector to a polyshape
 %   field_of_values      - Field of values (numerical range) of a matrix
