@@ -9,24 +9,32 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %   frequencies instead of logarithmic spacing.
 %
 %   [...] = SRG_COMPUTE(..., 'Inverse', true) returns the SRG of the
-%   INVERSE operator, SRG(T^-1), computed by taking the pointwise
-%   inverse 1/z of every point z on the Gauss-plane SRG boundary
-%   (gplus, gminus). This uses the identity SRG(T^-1) = {1/z : z in
-%   SRG(T)}, which holds whenever 0 is not in the interior of SRG(T).
-%   The inverted gplus (upper) branch is then mapped back into the
-%   Beltrami-Klein disk via the forward BK map, and returned as W, so
-%   that W also reflects the inverse operator rather than the
-%   original one. Only gplus is remapped: gminus is its complex
-%   conjugate, and the forward BK map is invariant under conjugation,
-%   so mapping both would be redundant. A (the eigenvalues in the BK
-%   disk) is left unchanged, since it is not derived from gplus/gminus.
+%   INVERSE operator, SRG(T^-1). At each frequency, the actual matrix
+%   inverse of the frequency response, inv(T_jw), is computed and run
+%   through the same Beltrami-Klein mapping / field-of-values / inverse
+%   BK mapping pipeline used for the non-inverse case. This is
+%   mathematically equivalent to the algebraic identity
+%   SRG(T^-1) = {1/z : z in SRG(T)}, but is computed directly rather
+%   than by inverting the already-discretized boundary of SRG(T): the
+%   map z -> 1/z is nonlinear and does not preserve the even angular
+%   sampling of the original boundary, so inverting boundary points
+%   after the fact leaves some regions severely under-resolved (which
+%   can cause downstream nearest-neighbor computations, e.g.
+%   SRG_STABILITY_MARGIN, to miss the true closest approach between two
+%   SRGs). Computing directly on inv(T_jw) gives full 'points' angular
+%   resolution everywhere, with no interpolation error, and is
+%   numerically identical to calling SRG_COMPUTE on a pre-inverted
+%   system (e.g. SRG_COMPUTE(inv(sys), ...)).
 %
-%   At every frequency slice, srg_compute checks whether the origin
-%   lies in the interior of the ORIGINAL (non-inverted) SRG. If it
-%   does, the pointwise-inverted region is unbounded and contains the
-%   point at infinity; a warning is issued listing the frequency
-%   range(s) where this occurs, and rawdata.zero_interior flags the
-%   affected frequency indices.
+%   At every frequency slice where Inverse=true, srg_compute checks
+%   whether the resulting boundary (gplus/gminus) contains any
+%   non-finite points. This happens when the Beltrami-Klein image of
+%   inv(T_jw) touches the singular point of the inverse BK mapping,
+%   which occurs precisely when SRG(T) comes close to containing the
+%   origin; in that case SRG(T^-1) is (partially) unbounded and
+%   contains the point at infinity. A warning is issued listing the
+%   frequency range(s) where this occurs, and rawdata.zero_interior
+%   flags the affected frequency indices.
 %
 %   Inputs:
 %       TransferFcn - Transfer function (tf/ss object) or constant matrix
@@ -39,22 +47,27 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %
 %   Name-Value Arguments:
 %       FreqScale   - Frequency spacing: "log" (default) or "linear"
-%       Inverse     - If true, return the pointwise-inverted (1/z) SRG,
-%                     i.e. SRG(T^-1). Default false.
+%       Inverse     - If true, return SRG(T^-1), computed directly from
+%                     inv(T_jw) at each frequency. Default false.
+%                     Requires TransferFcn to be square and invertible
+%                     (in the freqresp sense) across the frequency
+%                     sweep; behaves the same as manually computing
+%                     inv(TransferFcn) and passing that in.
 %
 %   Outputs:
 %       W       - Cell array of numerical range boundaries (Beltrami-Klein).
-%                 When Inverse=true, contains the BK-disk image of the
-%                 inverted gplus branch instead of the original operator's
-%                 numerical range.
-%       A       - Cell array of eigenvalues in Beltrami-Klein plane
+%                 When Inverse=true, contains the BK-disk numerical
+%                 range of inv(T_jw) instead of the original operator's.
+%       A       - Cell array of eigenvalues in Beltrami-Klein plane.
+%                 When Inverse=true, contains the eigenvalues of the
+%                 mapped inv(T_jw) instead of the original operator's.
 %       gplus   - Cell array of SRG upper boundaries (Gauss plane)
 %       gminus  - Cell array of SRG lower boundaries (Gauss plane)
 %       rawdata - Table with freq, maxphase, minphase, norminf, norminfm.
 %                 When Inverse=true, also includes zero_interior, a
 %                 logical column flagging frequencies at which the
-%                 origin was interior to the ORIGINAL SRG (i.e. where
-%                 the inverse SRG is unbounded and contains infinity).
+%                 inverse SRG boundary contains non-finite (unbounded)
+%                 points.
 %
 %   Examples:
 %       % Logarithmic spacing (default)
@@ -66,8 +79,8 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %                                      'FreqScale', 'linear');
 %
 %       % Inverse SRG, SRG(G^-1)
-%       [W,A,gp,gm,rd] = srg_compute(G, -2, 3, 200, 32, 'Inverse', true);
-%       if any(rd.zero_interior)
+%       [Wi,Ai,gpi,gmi,rdi] = srg_compute(G, -2, 3, 200, 32, 'Inverse', true);
+%       if any(rdi.zero_interior)
 %           disp('Inverse SRG is unbounded (contains infinity) at some frequencies.')
 %       end
 %
@@ -123,26 +136,31 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
     norminfm = zeros(estpoints, 1);
     zero_interior = false(estpoints, 1);
 
+    % Temporarily silence MATLAB's built-in singular-matrix warning when
+    % inverting T_jw: a singular/near-singular T_jw is an expected and
+    % meaningful situation here (it is exactly what produces an
+    % unbounded inverse SRG), and is already reported via
+    % rawdata.zero_interior and the consolidated warning below.
+    if options.Inverse
+        singWarnState = warning('off', 'MATLAB:singularMatrix');
+        nearSingWarnState = warning('off', 'MATLAB:nearlySingularMatrix');
+        cleanupWarn1 = onCleanup(@() warning(singWarnState)); %#ok<NASGU>
+        cleanupWarn2 = onCleanup(@() warning(nearSingWarnState)); %#ok<NASGU>
+    end
+
     %% Handle constant matrix: compute once, replicate across all frequencies
     if isa(TransferFcn, 'double')
         T_jw = TransferFcn;
+        if options.Inverse
+            T_jw = inv(T_jw);
+        end
         map_1 = beltrami_map_matrix(T_jw);
         [W1, A1] = field_of_values(map_1, 1, points, 1);
         [gp1, gm1] = beltrami_inv(W1);
 
-        is_interior_1 = false;
+        is_unbounded_1 = false;
         if options.Inverse
-            is_interior_1 = origin_in_srg(gp1, gm1);
-            gp1 = 1 ./ gp1;
-            gm1 = 1 ./ gm1;
-
-            % Map the inverted upper (gplus) boundary back into the
-            % Beltrami-Klein disk, so W reflects T^-1 too. Only one
-            % branch is needed: gminus is the conjugate of gplus, and
-            % the forward BK map is invariant under conjugation
-            % (beltrami_map_scalar(conj(z)) == beltrami_map_scalar(z)),
-            % so mapping gminus as well would just duplicate this curve.
-            W1 = beltrami_map_scalar(gp1(:));
+            is_unbounded_1 = any(~isfinite(gp1)) || any(~isfinite(gm1));
         end
 
         mp = max(abs(angle(gm1))) * 180/pi;
@@ -159,7 +177,7 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
             minphase(ii) = mnp;
             norminf(ii)  = ni;
             norminfm(ii) = nim;
-            zero_interior(ii) = is_interior_1;
+            zero_interior(ii) = is_unbounded_1;
         end
 
     else
@@ -167,6 +185,14 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
     for ii = 1:estpoints
 
         T_jw = freqresp(TransferFcn, y1(ii), 'Hz');
+
+        % Optionally work with the actual matrix inverse of the
+        % frequency response, so everything downstream (BK mapping,
+        % field of values, inverse BK mapping) is computed exactly for
+        % the inverse operator, at full angular resolution.
+        if options.Inverse
+            T_jw = inv(T_jw);
+        end
 
         % Beltrami-Klein mapping of the linear operator
         map_ii = beltrami_map_matrix(T_jw);%* exp(-1j * y1(ii))
@@ -179,19 +205,11 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
         % Inverse Beltrami-Klein mapping to Gauss plane
         [gp_ii, gm_ii] = beltrami_inv(W{ii});
 
-        % Optionally take the pointwise inverse: SRG(T^-1) = {1/z : z in SRG(T)}
         if options.Inverse
-            zero_interior(ii) = origin_in_srg(gp_ii, gm_ii);
-            gp_ii = 1 ./ gp_ii;
-            gm_ii = 1 ./ gm_ii;
-
-            % Map the inverted upper (gplus) boundary back into the
-            % Beltrami-Klein disk, so W reflects T^-1 too. Only one
-            % branch is needed: gminus is the conjugate of gplus, and
-            % the forward BK map is invariant under conjugation
-            % (beltrami_map_scalar(conj(z)) == beltrami_map_scalar(z)),
-            % so mapping gminus as well would just duplicate this curve.
-            W{ii} = beltrami_map_scalar(gp_ii(:));
+            % The inverse BK mapping has a singularity precisely where
+            % SRG(T) comes close to containing the origin; flag any
+            % non-finite boundary points that result.
+            zero_interior(ii) = any(~isfinite(gp_ii)) || any(~isfinite(gm_ii));
         end
 
         gplus{ii}  = gp_ii;
@@ -236,29 +254,12 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
             end
 
             warning('srg_compute:UnboundedInverseSRG', ...
-                ['The origin lies in the interior of the original SRG at ' ...
-                 '%d %s. The inverse SRG therefore contains the exterior ' ...
-                 'of the plotted boundary and includes the point at ' ...
+                ['The inverse SRG boundary contains non-finite points at ' ...
+                 '%d %s (T_jw is singular or near-singular there). The ' ...
+                 'inverse SRG is unbounded and includes the point at ' ...
                  'infinity over the frequency range(s): %s.'], ...
                  numel(idx), freqWord, rangeList);
         end
     end
 
-end
-
-%% Local helper: is the origin interior to the SRG boundary (gplus/gminus)?
-function tf = origin_in_srg(gp, gm)
-    gp = gp(:);
-    gm = gm(:);
-    % Close the boundary loop: upper boundary forward, lower boundary reversed
-    xs = [real(gp); flipud(real(gm))];
-    ys = [imag(gp); flipud(imag(gm))];
-
-    % Degenerate (near single-point) boundaries cannot enclose the origin
-    if numel(xs) < 3 || (range(xs) < eps(1) && range(ys) < eps(1))
-        tf = false;
-        return;
-    end
-
-    tf = inpolygon(0, 0, xs, ys);
 end
