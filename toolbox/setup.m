@@ -15,6 +15,7 @@
 
 root = fileparts(mfilename('fullpath'));
 bg   = fullfile(root, 'bg');
+examples   = fullfile(root, 'examples');
 
 if ~exist(bg, 'dir')
     error('setup:missingDir', ...
@@ -23,8 +24,10 @@ end
 
 addpath(root);
 addpath(bg);
+addpath(examples);
 
 fprintf('SRG Toolbox ready.\n');
 fprintf('  Root : %s\n', root);
 fprintf('  Utils: %s\n', bg);
+fprintf('  Examples: %s\n', examples);
 fprintf('Type ''help Contents'' for a list of functions.\n');
