@@ -20,7 +20,7 @@ Authors: Eder Baron-Prada · Adolfo Anta · Thomas Chaffey · Alberto Padoan · 
 ## Installation
 
 ```matlab
-cd srg-toolbox
+cd toolbox
 run setup       % adds toolbox root and bg/ to path
 help Contents   % list all functions
 ```
