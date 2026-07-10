@@ -13,11 +13,13 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %   inverse 1/z of every point z on the Gauss-plane SRG boundary
 %   (gplus, gminus). This uses the identity SRG(T^-1) = {1/z : z in
 %   SRG(T)}, which holds whenever 0 is not in the interior of SRG(T).
-%   The inverted Gauss-plane points are then mapped back into the
+%   The inverted gplus (upper) branch is then mapped back into the
 %   Beltrami-Klein disk via the forward BK map, and returned as W, so
 %   that W also reflects the inverse operator rather than the
-%   original one. A (the eigenvalues in the BK disk) is left
-%   unchanged, since it is not derived from gplus/gminus.
+%   original one. Only gplus is remapped: gminus is its complex
+%   conjugate, and the forward BK map is invariant under conjugation,
+%   so mapping both would be redundant. A (the eigenvalues in the BK
+%   disk) is left unchanged, since it is not derived from gplus/gminus.
 %
 %   At every frequency slice, srg_compute checks whether the origin
 %   lies in the interior of the ORIGINAL (non-inverted) SRG. If it
@@ -43,7 +45,7 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %   Outputs:
 %       W       - Cell array of numerical range boundaries (Beltrami-Klein).
 %                 When Inverse=true, contains the BK-disk image of the
-%                 pointwise-inverted SRG instead of the original operator's
+%                 inverted gplus branch instead of the original operator's
 %                 numerical range.
 %       A       - Cell array of eigenvalues in Beltrami-Klein plane
 %       gplus   - Cell array of SRG upper boundaries (Gauss plane)
@@ -83,7 +85,15 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
     end
 
     %% Frequency vector
-    auto = options.FreqScale == "auto" || isnan(rangemin) || isnan(rangemax);
+    % 'auto' (nyquist-driven) selection only applies when the range was
+    % genuinely left unspecified (rangemin/rangemax are NaN). If the
+    % caller supplies an explicit range, it is honored even when
+    % FreqScale is left at its default "auto" value -- otherwise
+    % explicit rangemin/rangemax/estpoints would be silently discarded
+    % whenever 'FreqScale' isn't also passed, and estpoints in the
+    % caller's workspace would no longer match numel(W).
+    rangeGiven = ~isnan(rangemin) && ~isnan(rangemax);
+    auto = options.FreqScale == "auto" && ~rangeGiven;
 
     if auto && ~isa(TransferFcn, 'double')
         [~, ~, wout] = nyquist(TransferFcn);   % rad/s, no plot
@@ -91,7 +101,7 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
         estpoints = numel(y1);
     elseif options.FreqScale == "linear"
         y1 = linspace(rangemin, rangemax, estpoints);
-    else  % "log" or auto fallback for constant matrices
+    else  % "log" (explicit or auto fallback for constant matrices / unspecified range)
         if isnan(rangemin), rangemin = -2; end
         if isnan(rangemax), rangemax =  3; end
         y1 = logspace(rangemin, rangemax, estpoints);
@@ -126,9 +136,13 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
             gp1 = 1 ./ gp1;
             gm1 = 1 ./ gm1;
 
-            % Map the pointwise-inverted Gauss-plane boundary back into
-            % the Beltrami-Klein disk, so W reflects T^-1 too.
-            W1 = [beltrami_map_scalar(gp1(:)); flipud(beltrami_map_scalar(gm1(:)))];
+            % Map the inverted upper (gplus) boundary back into the
+            % Beltrami-Klein disk, so W reflects T^-1 too. Only one
+            % branch is needed: gminus is the conjugate of gplus, and
+            % the forward BK map is invariant under conjugation
+            % (beltrami_map_scalar(conj(z)) == beltrami_map_scalar(z)),
+            % so mapping gminus as well would just duplicate this curve.
+            W1 = beltrami_map_scalar(gp1(:));
         end
 
         mp = max(abs(angle(gm1))) * 180/pi;
@@ -171,9 +185,13 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
             gp_ii = 1 ./ gp_ii;
             gm_ii = 1 ./ gm_ii;
 
-            % Map the pointwise-inverted Gauss-plane boundary back into
-            % the Beltrami-Klein disk, so W reflects T^-1 too.
-            W{ii} = [beltrami_map_scalar(gp_ii(:))];
+            % Map the inverted upper (gplus) boundary back into the
+            % Beltrami-Klein disk, so W reflects T^-1 too. Only one
+            % branch is needed: gminus is the conjugate of gplus, and
+            % the forward BK map is invariant under conjugation
+            % (beltrami_map_scalar(conj(z)) == beltrami_map_scalar(z)),
+            % so mapping gminus as well would just duplicate this curve.
+            W{ii} = beltrami_map_scalar(gp_ii(:));
         end
 
         gplus{ii}  = gp_ii;
