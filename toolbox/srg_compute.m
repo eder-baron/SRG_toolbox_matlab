@@ -12,29 +12,14 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %   INVERSE operator, SRG(T^-1). At each frequency, the actual matrix
 %   inverse of the frequency response, inv(T_jw), is computed and run
 %   through the same Beltrami-Klein mapping / field-of-values / inverse
-%   BK mapping pipeline used for the non-inverse case. This is
-%   mathematically equivalent to the algebraic identity
-%   SRG(T^-1) = {1/z : z in SRG(T)}, but is computed directly rather
-%   than by inverting the already-discretized boundary of SRG(T): the
-%   map z -> 1/z is nonlinear and does not preserve the even angular
-%   sampling of the original boundary, so inverting boundary points
-%   after the fact leaves some regions severely under-resolved (which
-%   can cause downstream nearest-neighbor computations, e.g.
-%   SRG_STABILITY_MARGIN, to miss the true closest approach between two
-%   SRGs). Computing directly on inv(T_jw) gives full 'points' angular
-%   resolution everywhere, with no interpolation error, and is
-%   numerically identical to calling SRG_COMPUTE on a pre-inverted
-%   system (e.g. SRG_COMPUTE(inv(sys), ...)).
+%   BK mapping pipeline used for the non-inverse case..
 %
 %   At every frequency slice where Inverse=true, srg_compute checks
 %   whether the resulting boundary (gplus/gminus) contains any
-%   non-finite points. This happens when the Beltrami-Klein image of
-%   inv(T_jw) touches the singular point of the inverse BK mapping,
-%   which occurs precisely when SRG(T) comes close to containing the
-%   origin; in that case SRG(T^-1) is (partially) unbounded and
-%   contains the point at infinity. A warning is issued listing the
+%   non-finite points. A warning is issued listing the
 %   frequency range(s) where this occurs, and rawdata.zero_interior
 %   flags the affected frequency indices.
+%
 %
 %   Inputs:
 %       TransferFcn - Transfer function (tf/ss object) or constant matrix
@@ -43,7 +28,9 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %       estpoints   - Number of frequency evaluation points
 %       points      - Angular resolution for field of values computation.
 %                     Increase (e.g. 64, 128) for smoother boundaries on
-%                     systems with sharply curved numerical ranges.
+%                     systems with sharply curved numerical ranges. Also
+%                     used as the chord-refinement density (see
+%                     'Refine' below).
 %
 %   Name-Value Arguments:
 %       FreqScale   - Frequency spacing: "log" (default) or "linear"
@@ -53,6 +40,13 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %                     (in the freqresp sense) across the frequency
 %                     sweep; behaves the same as manually computing
 %                     inv(TransferFcn) and passing that in.
+%       Refine      - If true (default), subdivide long BK-plane chords
+%                     via SRG_REFINE_CHORDS before mapping to the Gauss
+%                     plane. See above.
+%       RefineTol   - Maximum real- or imaginary-part step between
+%                     consecutive BK-plane boundary points before
+%                     SRG_REFINE_CHORDS subdivides that chord. Default
+%                     0.05. Only used when Refine=true.
 %
 %   Outputs:
 %       W       - Cell array of numerical range boundaries (Beltrami-Klein).
@@ -84,7 +78,13 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %           disp('Inverse SRG is unbounded (contains infinity) at some frequencies.')
 %       end
 %
-%   See also SRG_SCALED_GRAPH, SRG_PLOT_GAUSS, SRG_PLOT_BELTRAMI, SRG_HOMOTOPY
+%       % Normal operator with real eigenvalues (needs chord refinement,
+%       % which is on by default -- shown here just for illustration)
+%       H = diag([3, -2/3, 1]);
+%       [W,A,gp,gm,rd] = srg_compute(H, [], [], 1, 32, 'RefineTol', 0.02);
+%
+%   See also SRG_SCALED_GRAPH, SRG_PLOT_GAUSS, SRG_PLOT_BELTRAMI, ...
+%            SRG_HOMOTOPY, SRG_REFINE_CHORDS
 
     arguments
         TransferFcn
@@ -95,6 +95,8 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
         options.FreqScale string {mustBeMember(options.FreqScale, ...
             ["log","linear","auto"])} = "auto"
         options.Inverse (1,1) logical = false
+        options.Refine (1,1) logical = true
+        options.RefineTol (1,1) double {mustBePositive} = 0.05
     end
 
     %% Frequency vector
@@ -156,6 +158,9 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
         end
         map_1 = beltrami_map_matrix(T_jw);
         [W1, A1] = field_of_values(map_1, 1, points, 1);
+        if options.Refine
+            W1 = srg_refine_chords(W1, points, options.RefineTol);
+        end
         [gp1, gm1] = beltrami_inv(W1);
 
         is_unbounded_1 = false;
@@ -199,6 +204,16 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 
         % Numerical range (field of values) in the Beltrami-Klein plane
         [W1, A1] = field_of_values(map_ii, 1, points, 1);
+
+        % Subdivide long BK-plane chords before the nonlinear mapping to
+        % the Gauss plane. This is a no-op (returns W1 unchanged) unless
+        % some consecutive boundary points are farther apart than
+        % RefineTol, which mainly happens for normal operators (e.g.
+        % real eigenvalues at this frequency slice).
+        if options.Refine
+            W1 = srg_refine_chords(W1, points, options.RefineTol);
+        end
+
         W{ii} = W1;
         A{ii} = A1;
 
