@@ -31,25 +31,37 @@ function srg_plot_beltrami(TransferFcn, W, A, color, estpoints, options)
 
     hold on
 
+    % A "static" curve is either an explicit constant matrix/scalar
+    % (TransferFcn is double) or a single already-computed boundary
+    % curve wrapped in a 1x1 cell -- as returned by SRG_SCALED_GRAPH --
+    % regardless of what TransferFcn happens to be. SRG_PLOT_3D_BELTRAMI
+    % already dispatches this way (numel(gplus1)==1); matching that here
+    % means callers no longer need to remember to pass a placeholder
+    % double just to get single-curve behavior.
+    is_static = isa(TransferFcn, 'double') || numel(W) == 1;
+
     % Detect SISO: the numerical range of a 1x1 matrix is a single point,
     % so W{i} is a vector of identical values. Treating that as a region
     % produces an invisible plot — instead, trace the scalar BK image
-    % across frequency as a curve inside the disk.
-    is_siso = ~isa(TransferFcn, 'double') && ...
-              isequal(size(TransferFcn), [1 1]);
-    if ~is_siso && ~isa(TransferFcn, 'double')
-        is_siso = true;
-        tol = 1e-10;
-        for ii = 1:min(estpoints, length(W))
-            wi = W{ii};
-            if isempty(wi), continue; end
-            if length(wi) > 1 && max(abs(wi - wi(1))) > tol * max(abs(wi(1)), 1)
-                is_siso = false; break;
+    % across frequency as a curve inside the disk. Not applicable to the
+    % static case, which is always plotted as one curve regardless.
+    is_siso = false;
+    if ~is_static
+        is_siso = isequal(size(TransferFcn), [1 1]);
+        if ~is_siso
+            is_siso = true;
+            tol = 1e-10;
+            for ii = 1:min(estpoints, length(W))
+                wi = W{ii};
+                if isempty(wi), continue; end
+                if length(wi) > 1 && max(abs(wi - wi(1))) > tol * max(abs(wi(1)), 1)
+                    is_siso = false; break;
+                end
             end
         end
     end
 
-    if isa(TransferFcn, 'double')
+    if is_static
         if options.Fill
             fill_bk_slice(W{1}, c, options.FaceAlpha);
         end
