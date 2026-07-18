@@ -32,13 +32,6 @@
 %   srg_apply_style      - Apply SRG style configuration to the current axes
 %   srg_export           - Publication-ready export: PNG (always), TikZ (vector), PDF/EPS (best-effort)
 %
-% Internal utilities (bg/)
-%   beltrami_map_matrix  - Beltrami-Klein mapping for a matrix operator
-%   beltrami_map_scalar  - Beltrami-Klein mapping for scalar values (eigenvalues)
-%   beltrami_inv         - Inverse Beltrami-Klein mapping to the Gauss plane
-%   srg_to_polyshape     - Convert complex SRG boundary vector to a polyshape
-%   field_of_values      - Field of values (numerical range) of a matrix
-%
 % Examples
 %   example_01_freqwise_srg - SISO and MIMO frequency-wise SRG, stability margin, witness
 %   example_02_soft_srg     - Soft SRG (hyperbolic convex hull) for SISO and MIMO
