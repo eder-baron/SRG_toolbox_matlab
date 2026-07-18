@@ -95,22 +95,103 @@ function srg_plot_3d_beltrami_compare(rawdata1, W1, rawdata2, W2, fmin, fmax, op
     end
 
     % ------------------------------------------------------------------
-    % SISO short-circuit
+    % SISO detection (per input — a nominal MIMO system can still collapse
+    % to a single point per frequency, e.g. scalar * I)
     % ------------------------------------------------------------------
-    if is_all_constant(W1) && is_all_constant(W2)
+    siso1 = is_all_constant(W1);
+    siso2 = is_all_constant(W2);
+
+    if siso1 && siso2
         srg_plot_3d_beltrami(rawdata1, W1, fmin, fmax, options.Color1, ...
                              'Theme', options.Theme);
         srg_plot_3d_beltrami(rawdata2, W2, fmin, fmax, options.Color2, ...
                              'Theme', options.Theme);
         view([-35, 25]);
         grid(s.grid)
-            % Unit-disk cylinder boundary
-    if options.ShowDisk
-        draw_disk_cylinder(f_lo, f_hi, cd, options.DiskAlpha, options.DiskNTheta);
-    end
+        if options.ShowDisk
+            draw_disk_cylinder(f_lo, f_hi, cd, options.DiskAlpha, options.DiskNTheta);
+        end
         return;
     end
 
+    % ------------------------------------------------------------------
+    % Mixed case: one side is a genuine MIMO surface, the other collapses
+    % to a single point per frequency. A polygon/polygon intersection
+    % against a degenerate curve is meaningless, so instead render the
+    % degenerate side as a trajectory and check, at each frequency,
+    % whether that point lies inside the MIMO SRG (point-in-polygon).
+    % ------------------------------------------------------------------
+    if siso1 ~= siso2
+        if siso1
+            pts_siso = siso_trajectory(W1, idx1);
+            W_mimo   = W2;  idx_mimo = idx2;
+            c_siso   = c1;  c_mimo   = c2;
+        else
+            pts_siso = siso_trajectory(W2, idx2);
+            W_mimo   = W1;  idx_mimo = idx1;
+            c_siso   = c2;  c_mimo   = c1;
+        end
+
+        freqs = freq1(idx1);
+
+        Xm = NaN(n_freq, N);  Ym = NaN(n_freq, N);  Zm = NaN(n_freq, N);
+        valid_m = false(n_freq, 1);
+        inside  = false(n_freq, 1);
+
+        for kk = 1:n_freq
+            [xr, yr, ok] = resample_slice(W_mimo{idx_mimo(kk)}, N);
+            if ok
+                Xm(kk,:) = xr;  Ym(kk,:) = yr;  Zm(kk,:) = freqs(kk);
+                valid_m(kk) = true;
+            end
+
+            if isfinite(pts_siso(kk))
+                ps = make_polyshape(W_mimo{idx_mimo(kk)});
+                if ps.NumRegions > 0
+                    inside(kk) = isinterior(ps, real(pts_siso(kk)), imag(pts_siso(kk)));
+                end
+            end
+        end
+
+        diam_m = compute_diameters(Xm, Ym, valid_m);
+        if options.MinDiameter < 0
+            d = diam_m(valid_m & diam_m > 0);
+            min_diam = 0;
+            if ~isempty(d), min_diam = 0.005 * median(d); end
+        else
+            min_diam = options.MinDiameter;
+        end
+        valid_m = valid_m & diam_m >= min_diam;
+
+        [Xm, Ym] = align_slices(Xm, Ym, valid_m);
+
+        hold on
+
+        if sum(valid_m) >= 2
+            surf(Xm(valid_m,:), Ym(valid_m,:), Zm(valid_m,:), ...
+                 'FaceColor', c_mimo, 'FaceAlpha', options.FaceAlpha, ...
+                 'EdgeColor', c_mimo, 'EdgeAlpha', 0.08);
+        end
+
+        ok_pts = isfinite(pts_siso);
+        plot3(real(pts_siso(ok_pts)), imag(pts_siso(ok_pts)), freqs(ok_pts), ...
+              '-', 'Color', c_siso, 'LineWidth', s.linewidth);
+
+        if any(inside)
+            plot3(real(pts_siso(inside)), imag(pts_siso(inside)), freqs(inside), ...
+                  'o', 'MarkerFaceColor', ci, 'MarkerEdgeColor', ci, 'MarkerSize', 5);
+            warning('srg_plot_3d_beltrami_compare:trajectoryInsideSurface', ...
+                'SISO trajectory enters the MIMO SRG at %d of %d frequencies (%.3g-%.3g Hz).', ...
+                nnz(inside), n_freq, min(freqs(inside)), max(freqs(inside)));
+        end
+
+        if options.ShowDisk
+            draw_disk_cylinder(f_lo, f_hi, cd, options.DiskAlpha, options.DiskNTheta);
+        end
+
+        apply_axes_styling(s, options);
+        return;
+    end
 
     % ------------------------------------------------------------------
     % Resample and detect intersections
@@ -214,27 +295,7 @@ function srg_plot_3d_beltrami_compare(rawdata1, W1, rawdata2, W2, fmin, fmax, op
     % ------------------------------------------------------------------
     % Axes styling
     % ------------------------------------------------------------------
-    set(gca, 'ZScale', 'log');
-
-    if options.Lighting
-        lighting gouraud
-        material dull
-        camlight('headlight');
-        camlight('left');
-    end
-
-    set(gca, 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-             'Color', s.bgcolor);
-    grid on;  box on;
-    xlim([-1.05, 1.05]);
-    ylim([-1.05, 1.05]);
-    xlabel('Re', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-           'Interpreter', s.interpreter);
-    ylabel('Im', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-           'Interpreter', s.interpreter);
-    zlabel('Frequency', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-           'Interpreter', s.interpreter);
-    view([-35, 25]);
+    apply_axes_styling(s, options);
 
 end
 
@@ -375,6 +436,46 @@ function diams = compute_diameters(X, Y, valid)
         if valid(kk)
             diams(kk) = sqrt((max(X(kk,:))-min(X(kk,:)))^2 + ...
                              (max(Y(kk,:))-min(Y(kk,:)))^2);
+        end
+    end
+end
+
+
+function apply_axes_styling(s, options)
+    set(gca, 'ZScale', 'log');
+
+    if options.Lighting
+        lighting gouraud
+        material dull
+        camlight('headlight');
+        camlight('left');
+    end
+
+    set(gca, 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+             'Color', s.bgcolor);
+    grid on;  box on;
+    xlim([-1.05, 1.05]);
+    ylim([-1.05, 1.05]);
+    xlabel('Re', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+           'Interpreter', s.interpreter);
+    ylabel('Im', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+           'Interpreter', s.interpreter);
+    zlabel('Frequency', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+           'Interpreter', s.interpreter);
+    view([-35, 25]);
+end
+
+
+function pts = siso_trajectory(W, idx)
+%SISO_TRAJECTORY  One representative complex point per frequency for a
+%   cell array that has collapsed to a single point at every slice.
+    n   = numel(idx);
+    pts = NaN(n, 1);
+    for kk = 1:n
+        c = W{idx(kk)};
+        c = c(isfinite(c));
+        if ~isempty(c)
+            pts(kk) = c(1);
         end
     end
 end
