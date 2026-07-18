@@ -30,6 +30,16 @@ function [sg_p, sg_m, hull_bk] = srg_scaled_graph(input, options)
 %   Euclidean straight lines as geodesics, the Euclidean convex hull in
 %   the BK disk IS the hyperbolic convex hull.
 %
+%   Degenerate (collinear) point sets: for some systems the pooled
+%   BK-disk points are exactly collinear -- e.g. a first-order SISO
+%   system, whose Nyquist curve's BK image is a straight chord. A
+%   proper 2D convex hull is undefined for collinear input (CONVHULL
+%   errors), so this case is detected up front via the rank of the
+%   centered point set, and the two extreme points along the principal
+%   direction are used directly as a degenerate hull: the single open
+%   chord between them (not closed back to the start, since a line
+%   segment has no interior to enclose).
+%
 %   Inputs (positional):
 %       W      - Cell array of complex vectors, each containing BK-disk
 %                boundary points at one frequency (output of srg_compute).
@@ -46,10 +56,24 @@ function [sg_p, sg_m, hull_bk] = srg_scaled_graph(input, options)
 %                          (default: 100).
 %
 %   Outputs:
-%       sg_plus  - Upper branch of the Scaled Graph boundary (Gauss plane)
-%       sg_minus - Lower branch of the Scaled Graph boundary (Gauss plane)
-%       hull_bk  - Complex vector of the convex hull boundary in the
-%                  Beltrami-Klein disk
+%       sg_plus  - Upper branch of the Scaled Graph boundary (Gauss plane),
+%                  wrapped in a 1x1 cell for direct compatibility with the
+%                  Gauss-plane plot functions (srg_plot_gauss etc.)
+%       sg_minus - Lower branch of the Scaled Graph boundary (Gauss plane),
+%                  wrapped in a 1x1 cell (see sg_plus)
+%       hull_bk  - 1x1 cell containing the complex vector of the convex
+%                  hull boundary in the Beltrami-Klein disk. Wrapped in a
+%                  cell (rather than returned as a bare vector) so it is
+%                  directly compatible with srg_plot_beltrami and
+%                  srg_plot_3d_beltrami, both of which expect a cell
+%                  array of BK-plane curves and already have a
+%                  dedicated code path for a single static curve
+%                  (numel(W)==1): srg_plot_beltrami dispatches on
+%                  isa(TransferFcn,'double') for that path, so pass any
+%                  double as TransferFcn (its value is unused there);
+%                  srg_plot_3d_beltrami dispatches on numel(gplus1)==1
+%                  directly, so no such placeholder is needed. See the
+%                  examples below.
 %
 %   Examples:
 %       % --- From BK-disk output of srg_compute ---
@@ -60,6 +84,21 @@ function [sg_p, sg_m, hull_bk] = srg_scaled_graph(input, options)
 %       % --- From Gauss-plane SRG directly ---
 %       [sg_plus, sg_minus, hull_bk] = srg_scaled_graph([], ...
 %           'InputDomain', 'Gauss', 'GPlus', gplus, 'GMinus', gminus);
+%
+%       % --- Degenerate/collinear case (e.g. G = 1/(s+1)) ---
+%       G = tf(1, [1 1]);
+%       [W, ~, ~, ~, ~] = srg_compute(G, -2, 3, 200, 1);
+%       [sg_plus, sg_minus, hull_bk] = srg_scaled_graph(W);  % no longer errors
+%
+%       % --- Plotting the BK-disk hull directly ---
+%       % hull_bk is already a 1x1 cell, so it drops straight into the
+%       % Beltrami plotting functions with no reshaping needed.
+%       figure;
+%       srg_plot_beltrami(1, hull_bk, {[]}, 1, 1);   % TransferFcn=1 is a
+%                                                     % placeholder double,
+%                                                     % only its class matters
+%       figure;
+%       srg_plot_3d_beltrami(rawdata_single_freq, hull_bk, 0, 0, 1);
 %
 %   See also SRG_COMPUTE, SRG_PLOT_GAUSS, SRG_PLOT_BELTRAMI
 
@@ -108,9 +147,42 @@ function [sg_p, sg_m, hull_bk] = srg_scaled_graph(input, options)
     x = real(all_bk);
     y = imag(all_bk);
 
-    hull_idx = convhull(x, y);   % returns closed index (first == last)
-    hull_x   = x(hull_idx);
-    hull_y   = y(hull_idx);
+    % Detect a degenerate (collinear / rank-1) point set via the SVD of
+    % the centered coordinates: a proper 2D hull needs two non-negligible
+    % singular values. This is exactly the situation for e.g. a
+    % first-order SISO system, whose BK-disk image is a straight chord;
+    % CONVHULL cannot handle purely collinear input.
+    centroid = [mean(x), mean(y)];
+    centered = [x - centroid(1), y - centroid(2)];
+    [~, S, V] = svd(centered, 'econ');
+    sv = diag(S);
+    is_degenerate = (numel(sv) < 2) || (sv(2) <= 1e-9 * max(sv(1), eps));
+
+    if is_degenerate
+        if sv(1) <= 1e-9 * max(abs([x; y]), [], 'all')
+            % All pooled points coincide (zero-length hull); nothing
+            % meaningful to build a Scaled Graph from.
+            error('srg_scaled_graph:degenerateHull', ...
+                'All BK-disk points coincide; cannot form a Scaled Graph.');
+        end
+        % Collinear points: take the two extreme points along the
+        % principal direction and treat the segment between them as a
+        % single open chord. This is a genuine 1-D object (a line has no
+        % interior), so unlike CONVHULL's closed polygon output it is
+        % NOT traversed back to the start -- doing so would retrace the
+        % same straight line on top of itself, which renders as an
+        % overlapping/doubled stroke rather than one clean line.
+        proj = centered * V(:,1);
+        [~, i_min] = min(proj);
+        [~, i_max] = max(proj);
+        hull_idx = [i_min; i_max];
+        hull_x   = x(hull_idx);
+        hull_y   = y(hull_idx);
+    else
+        hull_idx = convhull(x, y);   % returns closed index (first == last)
+        hull_x   = x(hull_idx);
+        hull_y   = y(hull_idx);
+    end
 
     %% ------------------------------------------------------------------ %
     %  Step 2: Refine hull edges
@@ -131,9 +203,15 @@ function [sg_p, sg_m, hull_bk] = srg_scaled_graph(input, options)
         hull_refined_y(idx_start:idx_end) = linspace(hull_y(ii), hull_y(ii+1), n_refine);
     end
 
-    % Close the boundary
-    hull_refined_x(end+1) = hull_refined_x(1);
-    hull_refined_y(end+1) = hull_refined_y(1);
+    % Close the boundary. Only meaningful for the non-degenerate polygon
+    % hull (whose CONVHULL-derived edges already trace back to the start
+    % on the final edge, so this just adds an explicit duplicate final
+    % point). The degenerate open chord is a line segment, not a
+    % polygon, and must NOT be closed -- see the comment above.
+    if ~is_degenerate
+        hull_refined_x(end+1) = hull_refined_x(1);
+        hull_refined_y(end+1) = hull_refined_y(1);
+    end
 
     hull_bk = hull_refined_x + 1i * hull_refined_y;
 
@@ -143,6 +221,11 @@ function [sg_p, sg_m, hull_bk] = srg_scaled_graph(input, options)
     [sg_plus, sg_minus] = beltrami_inv(hull_bk);
     sg_p{1}=sg_plus;
     sg_m{1}=sg_minus;
+
+    % Wrap in a 1x1 cell to match sg_p/sg_m's convention and to plug
+    % directly into srg_plot_beltrami / srg_plot_3d_beltrami, which both
+    % expect a cell array of BK-plane curves (see the Outputs doc above).
+    hull_bk = {hull_bk};
 end
 
 %% ========================================================================
