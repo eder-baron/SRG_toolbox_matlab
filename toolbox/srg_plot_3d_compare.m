@@ -57,19 +57,6 @@ function srg_plot_3d_compare(rawdata1, gplus1, rawdata2, gplus2, fmin, fmax, opt
     end
 
     % =====================================================================
-    % SISO short-circuit
-    % =====================================================================
-    if is_all_constant(gplus1) && is_all_constant(gplus2)
-        srg_plot_3d(rawdata1, gplus1, fmin, fmax, options.Color1, ...
-                    'Theme', options.Theme, 'Mirror', options.Mirror);
-        srg_plot_3d(rawdata2, gplus2, fmin, fmax, options.Color2, ...
-                    'Theme', options.Theme, 'Mirror', options.Mirror);
-        view([-35, 25]);
-        grid on;
-        return;
-    end
-
-    % =====================================================================
     % Find common frequency grid
     % =====================================================================
     freq1 = rawdata1.freq;
@@ -93,6 +80,120 @@ function srg_plot_3d_compare(rawdata1, gplus1, rawdata2, gplus2, fmin, fmax, opt
     idx2 = zeros(n_freq, 1);
     for kk = 1:n_freq
         [~, idx2(kk)] = min(abs(freq2 - freq1(idx1(kk))));
+    end
+
+    % =====================================================================
+    % SISO detection (per input — a nominal MIMO system can still collapse
+    % to a single point per frequency, e.g. scalar * I)
+    % =====================================================================
+    siso1 = is_all_constant(gplus1);
+    siso2 = is_all_constant(gplus2);
+
+    if siso1 && siso2
+        srg_plot_3d(rawdata1, gplus1, fmin, fmax, options.Color1, ...
+                    'Theme', options.Theme, 'Mirror', options.Mirror);
+        srg_plot_3d(rawdata2, gplus2, fmin, fmax, options.Color2, ...
+                    'Theme', options.Theme, 'Mirror', options.Mirror);
+        view([-35, 25]);
+        grid on;
+        return;
+    end
+
+    % =====================================================================
+    % Mixed case: one side is a genuine MIMO surface, the other collapses
+    % to a single point per frequency. A polygon/polygon intersection
+    % against a degenerate curve is meaningless, so instead render the
+    % degenerate side as a trajectory and check, at each frequency,
+    % whether that point lies inside the MIMO SRG (point-in-polygon).
+    % =====================================================================
+    if siso1 ~= siso2
+        if siso1
+            pts_siso  = siso_trajectory(gplus1, idx1);
+            gp_mimo   = gplus2;  idx_mimo = idx2;
+            c_siso    = c1;      c_mimo   = c2;
+        else
+            pts_siso  = siso_trajectory(gplus2, idx2);
+            gp_mimo   = gplus1;  idx_mimo = idx1;
+            c_siso    = c2;      c_mimo   = c1;
+        end
+
+        freqs = freq1(idx1);
+
+        Xm = NaN(n_freq, N);  Ym = NaN(n_freq, N);  Zm = NaN(n_freq, N);
+        valid_m = false(n_freq, 1);
+        inside  = false(n_freq, 1);
+
+        for kk = 1:n_freq
+            [xr, yr, ok] = resample_slice(gp_mimo{idx_mimo(kk)}, N);
+            if ok
+                Xm(kk,:) = xr;  Ym(kk,:) = yr;  Zm(kk,:) = freqs(kk);
+                valid_m(kk) = true;
+            end
+
+            if isfinite(pts_siso(kk))
+                ps = make_polyshape(gp_mimo{idx_mimo(kk)});
+                if ps.NumRegions > 0
+                    p   = pts_siso(kk);
+                    in1 = isinterior(ps, real(p), imag(p));
+                    in2 = false;
+                    if options.Mirror
+                        in2 = isinterior(ps, real(p), -imag(p));
+                    end
+                    inside(kk) = in1 || in2;
+                end
+            end
+        end
+
+        diam_m = compute_diameters(Xm, Ym, valid_m);
+        if options.MinDiameter < 0
+            d = diam_m(valid_m & diam_m > 0);
+            min_diam = 0;
+            if ~isempty(d), min_diam = 0.005 * median(d); end
+        else
+            min_diam = options.MinDiameter;
+        end
+        valid_m = valid_m & diam_m >= min_diam;
+
+        [Xm, Ym] = align_slices(Xm, Ym, valid_m);
+
+        hold on
+        set(gca, 'SortMethod', 'depth');
+
+        if sum(valid_m) >= 2
+            surf(Xm(valid_m,:), Ym(valid_m,:), Zm(valid_m,:), ...
+                 'FaceColor', c_mimo, 'FaceAlpha', options.FaceAlpha, ...
+                 'EdgeColor', c_mimo, 'EdgeAlpha', ea);
+            if options.Mirror
+                surf(Xm(valid_m,:), -Ym(valid_m,:), Zm(valid_m,:), ...
+                     'FaceColor', c_mimo, 'FaceAlpha', options.FaceAlpha, ...
+                     'EdgeColor', c_mimo, 'EdgeAlpha', ea);
+            end
+        end
+
+        ok_pts = isfinite(pts_siso);
+        plot3(real(pts_siso(ok_pts)), imag(pts_siso(ok_pts)), freqs(ok_pts), ...
+              '-', 'Color', c_siso, 'LineWidth', s.linewidth);
+        if options.Mirror
+            plot3(real(pts_siso(ok_pts)), -imag(pts_siso(ok_pts)), freqs(ok_pts), ...
+                  '-', 'Color', c_siso, 'LineWidth', s.linewidth, ...
+                  'HandleVisibility', 'off');
+        end
+
+        if any(inside)
+            plot3(real(pts_siso(inside)), imag(pts_siso(inside)), freqs(inside), ...
+                  'o', 'MarkerFaceColor', ci, 'MarkerEdgeColor', ci, 'MarkerSize', 5);
+            if options.Mirror
+                plot3(real(pts_siso(inside)), -imag(pts_siso(inside)), freqs(inside), ...
+                      'o', 'MarkerFaceColor', ci, 'MarkerEdgeColor', ci, ...
+                      'MarkerSize', 5, 'HandleVisibility', 'off');
+            end
+            warning('srg_plot_3d_compare:trajectoryInsideSurface', ...
+                'SISO trajectory enters the MIMO SRG at %d of %d frequencies (%.3g-%.3g Hz).', ...
+                nnz(inside), n_freq, min(freqs(inside)), max(freqs(inside)));
+        end
+
+        apply_axes_styling(s, options);
+        return;
     end
 
     % =====================================================================
@@ -214,25 +315,7 @@ function srg_plot_3d_compare(rawdata1, gplus1, rawdata2, gplus2, fmin, fmax, opt
     % =====================================================================
     % Axes styling
     % =====================================================================
-    set(gca, 'ZScale', 'log');
-
-    if options.Lighting
-        lighting gouraud
-        material dull
-        camlight('headlight');
-        camlight('left');
-    end
-
-    set(gca, 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-             'Color', s.bgcolor);
-    grid on; box on;
-    xlabel('Re', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-           'Interpreter', s.interpreter);
-    ylabel('Im', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-           'Interpreter', s.interpreter);
-    zlabel('Frequency', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
-           'Interpreter', s.interpreter);
-    view([-35, 25]);
+    apply_axes_styling(s, options);
 
 end
 
@@ -333,6 +416,44 @@ function diams = compute_diameters(X, Y, valid)
         if valid(kk)
             diams(kk) = sqrt((max(X(kk,:))-min(X(kk,:)))^2 + ...
                              (max(Y(kk,:))-min(Y(kk,:)))^2);
+        end
+    end
+end
+
+
+function apply_axes_styling(s, options)
+    set(gca, 'ZScale', 'log');
+
+    if options.Lighting
+        lighting gouraud
+        material dull
+        camlight('headlight');
+        camlight('left');
+    end
+
+    set(gca, 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+             'Color', s.bgcolor);
+    grid on; box on;
+    xlabel('Re', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+           'Interpreter', s.interpreter);
+    ylabel('Im', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+           'Interpreter', s.interpreter);
+    zlabel('Frequency', 'FontSize', s.fontsize, 'FontName', s.fontname, ...
+           'Interpreter', s.interpreter);
+    view([-35, 25]);
+end
+
+
+function pts = siso_trajectory(gp, idx)
+%SISO_TRAJECTORY  One representative complex point per frequency for a
+%   cell array that has collapsed to a single point at every slice.
+    n   = numel(idx);
+    pts = NaN(n, 1);
+    for kk = 1:n
+        c = gp{idx(kk)};
+        c = c(isfinite(c));
+        if ~isempty(c)
+            pts(kk) = c(1);
         end
     end
 end
