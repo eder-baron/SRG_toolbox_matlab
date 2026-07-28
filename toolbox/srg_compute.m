@@ -88,8 +88,8 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 
     arguments
         TransferFcn
-        rangemin    (1,1) double = NaN
-        rangemax    (1,1) double = NaN
+        rangemin    double {mustBeScalarOrEmpty} = NaN
+        rangemax    double {mustBeScalarOrEmpty} = NaN
         estpoints   (1,1) double {mustBePositive, mustBeInteger} = 200
         points      (1,1) double {mustBePositive, mustBeInteger} = 64
         options.FreqScale string {mustBeMember(options.FreqScale, ...
