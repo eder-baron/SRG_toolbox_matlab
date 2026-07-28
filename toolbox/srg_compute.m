@@ -23,8 +23,12 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
 %
 %   Inputs:
 %       TransferFcn - Transfer function (tf/ss object) or constant matrix
-%       rangemin    - Minimum frequency exponent (log) or value (linear)
-%       rangemax    - Maximum frequency exponent (log) or value (linear)
+%       rangemin    - Minimum frequency exponent (log) or value (linear).
+%                     Pass [] (or omit trailing arguments) to use the
+%                     default range.
+%       rangemax    - Maximum frequency exponent (log) or value (linear).
+%                     Pass [] (or omit trailing arguments) to use the
+%                     default range.
 %       estpoints   - Number of frequency evaluation points
 %       points      - Angular resolution for field of values computation.
 %                     Increase (e.g. 64, 128) for smoother boundaries on
@@ -98,6 +102,18 @@ function [W,A,gplus,gminus,rawdata] = srg_compute(TransferFcn, rangemin, rangema
         options.Refine (1,1) logical = true
         options.RefineTol (1,1) double {mustBePositive} = 0.05
     end
+
+    % rangemin/rangemax use (1,1)-free validation above specifically so
+    % that '[]' is accepted rather than rejected: MATLAB's arguments-block
+    % defaults only apply when a positional argument is omitted entirely,
+    % not when '[]' is passed in its place, so callers who write
+    % srg_compute(H, [], [], estpoints, points) to skip the range and get
+    % to a later positional argument would otherwise hit a hard
+    % validation error instead of the intended default. Normalize back to
+    % NaN here so the rest of the function only has one "unspecified"
+    % representation to deal with.
+    if isempty(rangemin), rangemin = NaN; end
+    if isempty(rangemax), rangemax = NaN; end
 
     %% Frequency vector
     % 'auto' (nyquist-driven) selection only applies when the range was
