@@ -62,11 +62,20 @@ function srg_plot_beltrami(TransferFcn, W, A, color, estpoints, options)
     end
 
     if is_static
-        if options.Fill
-            fill_bk_slice(W{1}, c, options.FaceAlpha);
+        if is_single_point(W{1})
+            % Scalar constant — the BK image degenerates to one repeated
+            % point, so a line plot has zero length and is invisible.
+            % Draw a small filled ball instead, matching SRG_PLOT_GAUSS.
+            plot(real(W{1}(1)), imag(W{1}(1)), 'o', ...
+                 'Color', c, 'MarkerFaceColor', c, 'MarkerEdgeColor', 'none', ...
+                 'MarkerSize', 6)
+        else
+            if options.Fill
+                fill_bk_slice(W{1}, c, options.FaceAlpha);
+            end
+            plot(W{1}, 'LineWidth', s.linewidth, 'Color', c)
+           % plot(A{1}, 'x', 'LineWidth', s.linewidth, 'Color', c)
         end
-        plot(W{1}, 'LineWidth', s.linewidth, 'Color', c)
-       % plot(A{1}, 'x', 'LineWidth', s.linewidth, 'Color', c)
     elseif is_siso
         % --- SISO: BK trajectory of the scalar across frequency ---
         n = min(estpoints, length(W));
@@ -126,6 +135,15 @@ function fill_bk_slice(W_slice, c, face_alpha)
         plot(ps, 'FaceColor', c_pale, 'FaceAlpha', face_alpha, ...
              'EdgeColor', 'none');
     end
+end
+
+%--------------------------------------------------------------------------
+function tf = is_single_point(curve)
+%IS_SINGLE_POINT  True when all finite values in curve are the same point.
+    curve = curve(isfinite(curve));
+    if isempty(curve), tf = true; return; end
+    tol = max(1e-10, max(abs(curve)) * 1e-8);
+    tf  = max(abs(curve - curve(1))) < tol;
 end
 
 %--------------------------------------------------------------------------
